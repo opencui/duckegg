@@ -3,6 +3,10 @@ Instead of trying teach LLM with examples, we can get the desired behavior much 
 
 However, intead of trying to use rules and a simple classifier to extract entities the right way, so committing to an interpretation, that may or may not be correct, this version, balut, try to do less instead, by only providing signal so other NLU modules does not need to recognize the pattern.
 
+# For developer
+1. Install leiningen on your platform
+2. type 'lein uberjar' at the root to build the jar so that you can use it in down stream project.
+
 # Duckegg
 
 [![Clojars Project](https://clojars.org/wit/duckling/latest-version.svg)](http://clojars.org/wit/duckling)
