@@ -8,18 +8,11 @@ However, intead of trying to use rules and a simple classifier to extract entiti
 2. type 'lein uberjar' at the root to build the jar so that you can use it in down stream project.
 
 # Duckegg
-
-[![Clojars Project](https://clojars.org/wit/duckling/latest-version.svg)](http://clojars.org/wit/duckling)
-
 Duckegg is a Clojure library that parses text into structured data:
 
     “the first Tuesday of October” => {:value "2014-10-07T00:00:00.000-07:00"
                                        :grain :day}
 
-
-You can try it out at https://duckling.wit.ai
-
-See our [blog post announcement](https://wit.ai/blog/2014/10/01/open-source-parser-duckling) for more context.
 
 ## Getting started
 
@@ -41,5 +34,3 @@ To use Duckling in your project, you just need two functions: `load!` to load th
 ;;        :value {:type "value", :value "2015-01-26T06:00:00.000-02:00", :grain :hour}
 ;;        :body "last Monday of January 2015 at 6am"}]
 ```
-
-See the [documentation](https://duckling.wit.ai) for more information.
