@@ -1,8 +1,7 @@
-# Deprecation notice
+# Hybrid wins
+Instead of trying teach LLM with examples, we can get the desired behavior much more efficiently using patterns we already know.
 
-As of May 1st, 2017 we're deprecating this repository in favor of [the new Duckling](https://github.com/facebookincubator/duckling). See our [blog post announcement](https://wit.ai/blog/2017/05/01/new-duckling).
-
-Thanks to all the contributors!
+However, intead of trying to use rules and a simple classifier to extract entities the right way, so committing to an interpretation, that may or may not be correct, this version, balut, try to do less instead, by only providing signal so other NLU modules does not need to recognize the pattern.
 
 # Duckling
 
