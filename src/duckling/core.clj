@@ -382,7 +382,8 @@
   order) than another winner, and that resolves to a value"
   [resolve-fn candidates]
   (->> candidates
-       (mapcat resolve-fn)))
+       (mapcat resolve-fn)
+       (filter :value)))
 
 
 (defn- detect*
