@@ -377,6 +377,66 @@
         (map #(select-keys % [:dim :body :value :start :end :latent])))))
 
 
+(defn- not-select-winners
+  "Winner= token that is not 'smaller' (in the sense of the provided partial
+  order) than another winner, and that resolves to a value"
+  [resolve-fn candidates]
+  (->> candidates
+       (mapcat resolve-fn)))
+
+
+(defn- detect*
+  "Parse a sentence, returns the stash and a curated list of winners.
+   Targets is a coll of {:dim dim :label label} : only winners of these dims are
+   kept, and they receive a :label key = the label provided.
+   If no targets specified, all winners are returned."
+  [s context module targets base-stash]
+  {:pre [s context module]}
+  (let [rules (get-rules module)
+        stash (engine/pass-all s rules base-stash)
+        ; add an index to tokens in the stash
+        stash (map #(if (map? %1) (assoc %1 :index %2) %1)
+                   stash
+                   (iterate inc 0))
+        dim-label (when (seq targets) (into {} (for [{:keys [dim label]} targets]
+                                           [(keyword dim) label])))
+        winners (->> stash
+                     (filter :pos)
+                     ; just keep the dims we want, and add the label key
+                     (?>> dim-label (keep #(when-let [label (get dim-label (:dim %))]
+                                             (assoc % :label label))))
+                     ; normalize the time.
+                     (not-select-winners
+                       #(engine/resolve-token % context module))
+
+                     ; add a confidence key
+                     ; low confidence for numbers covered by datetime
+                     (engine/estimate-confidence context module)
+                     ; adapt the keys for the outside world
+                     (map (fn [{:keys [pos end text] :as token}]
+                            (merge token {:start pos
+                                          :end end
+                                          :body text}))))]
+    {:stash stash :winners winners}))
+
+
+(defn detect
+  "Public API. Parses text using given module. If dims are provided as a list of
+  keywords referencing token dimensions, only these dimensions are extracted.
+  Context is a map with a :reference-time key. If not provided, the system
+  current date and time is used."
+  ([module text]
+   (detect module text []))
+  ([module text dims]
+   (detect module text dims (default-context :now)))
+  ([module text dims context]
+   (->> (detect* text context module (map (fn [dim] {:dim dim :label dim}) dims) nil)
+        :winners
+        (map #(assoc % :value (engine/export-value % {})))
+        (map #(select-keys % [:dim :body :value :start :end :latent])))))
+
+
+
 ;--------------------------------------------------------------------------
 ; The stuff below is specific to Wit.ai and will be moved out of Duckling
 ;--------------------------------------------------------------------------
