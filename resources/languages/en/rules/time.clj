@@ -443,11 +443,11 @@
 
   "morning" ;; TODO "3am this morning" won't work since morning starts at 4...
   [#"(?i)morning"]
-  (assoc (interval (hour 4 false) (hour 12 false) false) :form :part-of-day :latent true)
+  (assoc (interval (hour 0 false) (hour 12 false) false) :form :part-of-day :latent true)
 
   "early morning"
   [#"(?i)early ((in|hours of) the )?morning"]
-  (assoc (interval (hour 4 false) (hour 9 false) false) :form :part-of-day :latent true)
+  (assoc (interval (hour 0 false) (hour 9 false) false) :form :part-of-day :latent true)
 
   "afternoon"
   [#"(?i)after ?noo?n"]
@@ -459,7 +459,7 @@
 
   "lunch"
   [#"(?i)(at )?lunch"]
-  (assoc (interval (hour 12 false) (hour 14 false) false) :form :part-of-day :latent true)
+  (assoc (interval (hour 11 false) (hour 14 false) false) :form :part-of-day :latent true)
 
   "in|during the <part-of-day>" ;; removes latent
   [#"(?i)(in|during)( the)?" {:form :part-of-day}]
