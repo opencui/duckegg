@@ -288,7 +288,6 @@
   ([] (load! nil))
   ([languages]
    (let [langs (seq languages)
-         status (println "before" languages)
          config (when (or langs (empty? nil))
                        (cond-> (set (res/get-subdirs "languages"))
                          langs (set/intersection (set langs))
