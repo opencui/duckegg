@@ -286,13 +286,13 @@
    If no language list nor config provided, loads all languages.
    Returns a map of loaded modules with available dimensions."
   ([] (load! nil))
-  ([{:keys [languages config]}]
+  ([languages]
    (let [langs (seq languages)
-         lang-config (when (or langs (empty? config))
+         status (println "before" languages)
+         config (when (or langs (empty? nil))
                        (cond-> (set (res/get-subdirs "languages"))
                          langs (set/intersection (set langs))
-                         true gen-config-for-langs))
-         config (merge lang-config config)]
+                         true gen-config-for-langs))]
      (reset! rules-map {})
      (reset! corpus-map {})
      (let [data (->> config
