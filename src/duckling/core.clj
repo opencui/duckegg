@@ -286,13 +286,12 @@
    If no language list nor config provided, loads all languages.
    Returns a map of loaded modules with available dimensions."
   ([] (load! nil))
-  ([{:keys [languages config]}]
+  ([languages]
    (let [langs (seq languages)
-         lang-config (when (or langs (empty? config))
+         config (when (or langs (empty? nil))
                        (cond-> (set (res/get-subdirs "languages"))
                          langs (set/intersection (set langs))
-                         true gen-config-for-langs))
-         config (merge lang-config config)]
+                         true gen-config-for-langs))]
      (reset! rules-map {})
      (reset! corpus-map {})
      (let [data (->> config
@@ -360,23 +359,6 @@
 ;--------------------------------------------------------------------------
 ; Public API
 ;--------------------------------------------------------------------------
-
-(defn parse
-  "Public API. Parses text using given module. If dims are provided as a list of
-  keywords referencing token dimensions, only these dimensions are extracted.
-  Context is a map with a :reference-time key. If not provided, the system
-  current date and time is used."
-  ([module text]
-   (parse module text []))
-  ([module text dims]
-   (parse module text dims (default-context :now)))
-  ([module text dims context]
-   (->> (analyze text context module (map (fn [dim] {:dim dim :label dim}) dims) nil)
-        :winners
-        (map #(assoc % :value (engine/export-value % {})))
-        (map #(select-keys % [:dim :body :value :start :end :latent])))))
-
-
 (defn- not-select-winners
   "Winner= token that is not 'smaller' (in the sense of the provided partial
   order) than another winner, and that resolves to a value"
@@ -438,49 +420,3 @@
 
 
 
-;--------------------------------------------------------------------------
-; The stuff below is specific to Wit.ai and will be moved out of Duckling
-;--------------------------------------------------------------------------
-
-(defn- generate-context
-  "Wit.ai internal. Will move to Wit."
-  [base-context]
-  (-> base-context
-      (?> (instance? org.joda.time.DateTime (:reference-time base-context))
-          (assoc :reference-time {:start (:reference-time base-context)
-                                  :grain :second}))))
-
-(defn extract
-  "API used by Wit.ai (will be moved to Wit)
-   targets is a coll of maps {:module :dim :label} for instance:
-   {:module fr$core, :dim duration, :label wit$duration} to get duration results
-   Returns a single coll of tokens with :body :value :start :end :label (=wisp) :latent"
-  [sentence context leven-stash targets]
-  {:pre [(string? sentence)
-         (map? context)
-         (:reference-time context)
-         (vector? targets)]}
-  (try
-    (infof "Extracting from '%s' with targets %s" sentence targets)
-    (letfn [(extract'
-              [module targets] ; targets specify all the dims we should extract
-              (let [module (keyword module)
-                    pic-context (generate-context context)]
-                (when-not (module @rules-map)
-                  (throw (ex-info "Unknown duckling module" {:module module})))
-                (->> (analyze sentence pic-context module targets leven-stash)
-                     :winners
-                     (map #(assoc % :value (engine/export-value % {:date-fn str})))
-                     (map #(select-keys % [:label :body :value :start :end :latent])))))]
-      (->> targets
-           (group-by :module) ; we want to run each config only once
-           (mapcat (fn [[module targets]] (extract' module targets)))
-           vec))
-    (catch Exception e
-      (let [err {:e e
-                 :sentence sentence
-                 :context context
-                 :leven-stash leven-stash
-                 :targets targets}]
-         (errorf e "duckling error err=%s" (pr-str err))
-         []))))
