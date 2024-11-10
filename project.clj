@@ -3,12 +3,13 @@
   :license {:url "https://github.com/wit-ai/duckling"
             :comments "see LICENSE"}
   :url "https://github.com/wit-ai/duckling"
+  :jvm-opts ["--add-opens" "java.base/sun.net.www.protocol.jar=ALL-UNNAMED"]
   :plugins [[s3-wagon-private "1.1.2"]
             [lein-midje "3.1.3"]]
   :repl-options {:init-ns duckling.core}
-  :dependencies [[org.clojure/clojure "1.8.0"]
-                 [org.clojure/tools.nrepl "0.2.3"]
-                 [org.clojure/tools.logging "0.2.6"]
+  :dependencies [[org.clojure/clojure "1.12.0"]
+                 [org.clojure/tools.nrepl "0.2.13"]
+                 [org.clojure/tools.logging "1.3.0"]
                  [clj-time "0.8.0"]
                  [prismatic/plumbing "0.5.3"]]
   :deploy-repositories [["clojars" {:creds :gpg}]]
