@@ -541,7 +541,7 @@
 
  "3 lata od dziś"
  ;;"za trzy lata od dzisiaj" Gives the correct result but produces two
- ;;identical winners
+ ;;identical candidates
  (datetime 2016 2)
 
  "w 7 dni"

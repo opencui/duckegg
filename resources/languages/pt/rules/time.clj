@@ -12,7 +12,7 @@
 
   ; mostly for segunda, 18 de fevereiro
   ; this is a separate rule, because commas separate very specific tokens
-  ; so we want this rule's classifier to learn this
+  ; so this rule only matches the explicit comma-separated form
   "two time tokens separated by \",\""
   [(dim :time #(not (:latent %))) #"," (dim :time #(not (:latent %)))] ; sequence of two tokens with a time fn
   (intersect %1 %3)

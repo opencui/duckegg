@@ -7,7 +7,7 @@
 
   ; mostly for January 12, 2005
   ; this is a separate rule, because commas separate very specific tokens
-  ; so we want this rule's classifier to learn this
+  ; so this rule only matches the explicit comma-separated form
   "intersect by \",\""
   [(dim :time #(not (:latent %))) #"," (dim :time #(not (:latent %)))] ; sequence of two tokens with a time fn
   (intersect %1 %3)
