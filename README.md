@@ -1,7 +1,10 @@
 # Hybrid wins
-Instead of trying teach LLM with examples, we can get the desired behavior much more efficiently using patterns we already know.
+Instead of teaching an LLM every known language pattern through examples, we can
+apply those patterns directly and pass their signals to downstream NLU modules.
 
-However, intead of trying to use rules and a simple classifier to extract entities the right way, so committing to an interpretation, that may or may not be correct, this version, balut, try to do less instead, by only providing signal so other NLU modules does not need to recognize the pattern.
+Duckegg deliberately does not rank ambiguous matches or commit to a single
+interpretation. It returns every rule match that can be normalized, leaving the
+final decision to its caller.
 
 # For developer
 1. Install leiningen on your platform
@@ -16,21 +19,22 @@ Duckegg is a Clojure library that parses text into structured data:
 
 ## Getting started
 
-To use Duckling in your project, you just need two functions: `load!` to load the default configuration, and `parse` to parse a string.
+To use Duckegg in your project, call `load!` to load the languages you need and
+`detect` to find normalized matches in a string.
 
 ```clojure
 (ns myproject.core
   (:require [duckling.core :as p]))
 
-(p/load!) ;; Load all languages
+(p/load! ["en"]) ;; Omit the argument to load all languages
 
-(p/parse :en$core ;; core configuration for English ; see also :fr$core, :es$core, :zh$core
-         "wake me up the last Monday of January 2015 at 6am"
-         [:time]) ;; We are interested in :time expressions only ; see also :duration, :temperature, etc.
+(p/detect :en$core ;; core configuration for English; see also :fr$core, :es$core, :zh$core
+          "wake me up the last Monday of January 2015 at 6am"
+          [:time]) ;; Return :time matches; see also :duration, :temperature, etc.
 
-;; => [{:label :time
+;; includes {:dim :time
 ;;        :start 15
 ;;        :end 49
 ;;        :value {:type "value", :value "2015-01-26T06:00:00.000-02:00", :grain :hour}
-;;        :body "last Monday of January 2015 at 6am"}]
+;;        :body "last Monday of January 2015 at 6am"}
 ```

@@ -6,15 +6,12 @@
             [clojure.string :as string]
             [duckling.corpus :as corpus]
             [duckling.engine :as engine]
-            [duckling.learn :as learn]
             [duckling.resource :as res]
-            [duckling.time.api :as api]
             [duckling.time.obj :as time]
             [duckling.util :as util]))
 
 (defonce rules-map (atom {}))
 (defonce corpus-map (atom {}))
-(defonce classifiers-map (atom {}))
 
 (defn default-context
   "Build a default context for testing. opt can be either :corpus or :now"
@@ -23,74 +20,25 @@
                      :corpus (time/t -2 2013 2 12 4 30)
                      :now (time/now))})
 
-(defn- get-classifier
-  [id]
-  (when id
-    (get @classifiers-map (keyword id))))
-
 (defn- get-rules
   [id]
   (when id
     (get @rules-map (keyword id))))
 
-(defn- compare-tokens
-  "Compares two candidate tokens a and b for runtime selection.
-  wanted-dim is a hash whose keys are the :dim wanted by the caller, the value
-  can be anything truthy.
-  Returns nil: not comparable 0: equal 1: greater -1: lesser"
-  [a b classifiers wanted-dims]
-  {:pre [(map? classifiers)]}
-  (let [same-dim (= (:dim a) (:dim b))
-        wanted-a (get wanted-dims (:dim a))
-        wanted-b (get wanted-dims (:dim b))
-        cmp-interval (util/compare-intervals
-                       [(:pos a) (:end a)]
-                       [(:pos b) (:end b)])] ; +1 0 -1 nil
-  ;(printf "Comparing %d and %d \n" (:index a) (:index b))
-  (if-not same-dim
-    ; unless a is wanted and covers b, or the contrary, they are not comparable
-    (cond (and wanted-a (= 1 cmp-interval)) 1
-          (and wanted-b (= -1 cmp-interval)) -1
-          :else nil)
-    (if (not= 0 cmp-interval)
-      cmp-interval ; one interval recovers the other
-      (compare (:log-prob a) (:log-prob b))))))
-
-(defn- select-winners*
-  [compare-fn resolve-fn already-selected candidates]
-  (if (seq candidates)
-    (let [[maxima others] (util/split-by-partial-max
-                           compare-fn
-                           candidates
-                           (concat already-selected candidates))
-          new-winners (->> maxima
-                           (mapcat resolve-fn)
-                           (filter :value))] ; remove unresolved
-      (if (seq maxima)
-        (recur compare-fn resolve-fn (concat already-selected new-winners) others)
-        already-selected))
-    already-selected))
-
-(defn- select-winners
-  "Winner= token that is not 'smaller' (in the sense of the provided partial
-  order) than another winner, and that resolves to a value"
-  [compare-fn log-prob-fn resolve-fn candidates]
+(defn- resolve-candidates
+  "Normalizes candidates and discards those that cannot be resolved to values."
+  [resolve-fn candidates]
   (->> candidates
-       (map #(assoc % :log-prob (log-prob-fn %)))
-       (select-winners* compare-fn resolve-fn [])
-       (map #(dissoc % :log-prob))))
+       (mapcat resolve-fn)
+       (filter :value)))
 
-(defn analyze
-  "Parse a sentence, returns the stash and a curated list of winners.
-   Targets is a coll of {:dim dim :label label} : only winners of these dims are
-   kept, and they receive a :label key = the label provided.
-   If no targets specified, all winners are returned."
+(defn- detect*
+  "Parse a sentence and return every normalized rule match.
+   Targets is a collection of {:dim dim :label label}. When targets are
+   provided, only candidates in those dimensions are returned."
   [s context module targets base-stash]
   {:pre [s context module]}
-  (let [classifiers (get-classifier module)
-        _ (when-not (map? classifiers)
-            (errorf "[duckling] Module %s is not loaded. Did you (load!)?" module))
-        rules (get-rules module)
+  (let [rules (get-rules module)
         stash (engine/pass-all s rules base-stash)
         ; add an index to tokens in the stash
         stash (map #(if (map? %1) (assoc %1 :index %2) %1)
@@ -98,26 +46,19 @@
                    (iterate inc 0))
         dim-label (when (seq targets) (into {} (for [{:keys [dim label]} targets]
                                            [(keyword dim) label])))
-        winners (->> stash
-                     (filter :pos)
-                     ; just keep the dims we want, and add the label key
-                     (?>> dim-label (keep #(when-let [label (get dim-label (:dim %))]
-                                             (assoc % :label label))))
-
-                     (select-winners
-                       #(compare-tokens %1 %2 classifiers dim-label)
-                       #(learn/route-prob % classifiers)
-                       #(engine/resolve-token % context module))
-
-                     ; add a confidence key
-                     ; low confidence for numbers covered by datetime
-                     (engine/estimate-confidence context module)
-                     ; adapt the keys for the outside world
-                     (map (fn [{:keys [pos end text] :as token}]
-                            (merge token {:start pos
-                                          :end end
-                                          :body text}))))]
-    {:stash stash :winners winners}))
+        candidates (->> stash
+                        (filter :pos)
+                        ; just keep the dims we want, and add the label key
+                        (?>> dim-label (keep #(when-let [label (get dim-label (:dim %))]
+                                                (assoc % :label label))))
+                        (resolve-candidates
+                          #(engine/resolve-token % context module))
+                        ; adapt the keys for the outside world
+                        (map (fn [{:keys [pos end text] :as token}]
+                               (merge token {:start pos
+                                             :end end
+                                             :body text}))))]
+    {:stash stash :candidates candidates}))
 
 
 ;--------------------------------------------------------------------------
@@ -126,28 +67,27 @@
 
 (defn- print-stash
   "Print stash to STDOUT"
-  [stash classifiers winners]
+  [stash candidates]
   (let [width (count (:text (first stash)))
-        winners-indices (map :index winners)]
+        candidate-indices (map :index candidates)]
     (doseq [[tok i] (reverse (map vector stash (iterate inc 0)))]
       (let [pos (:pos tok)
             end (:end tok)]
         (if pos
-          (printf "%s %s%s%s %2d | %-9s | %-25s | P = %04.4f | %.20s\n"
-                  (if (some #{(:index tok)} winners-indices) "W" " ")
+          (printf "%s %s%s%s %2d | %-9s | %-25s | %.20s\n"
+                  (if (some #{(:index tok)} candidate-indices) "C" " ")
                   (apply str (repeat pos \space))
                   (apply str (repeat (- end pos) \-))
                   (apply str (repeat (- width end -1) \space))
                   i
                   (when-let [x (:dim tok)] (name x))
                   (when-let [x (-> tok :rule :name)] (name x))
-                  (float (learn/route-prob tok classifiers))
                   (string/join " + " (mapv #(get-in % [:rule :name]) (:route tok))))
           (printf "  %s\n" (:text tok)))))))
 
 (defn- print-tokens
   "Recursively prints a tree representing a route"
-  ([tokens classifiers]
+  ([tokens]
     {:pre [(coll? tokens)]}
     (let [tokens (if (vector? tokens)
                    tokens
@@ -155,16 +95,15 @@
           tokens (if (= 1 (count tokens))
                    tokens
                    [{:route tokens :rule {:name "root"}}])]
-      (print-tokens tokens classifiers 0)))
-  ([tokens classifiers depth]
-    (print-tokens tokens classifiers depth ""))
-  ([tokens classifiers depth prefix]
+      (print-tokens tokens 0)))
+  ([tokens depth]
+    (print-tokens tokens depth ""))
+  ([tokens depth prefix]
     (doseq [[token i] (map vector tokens (iterate inc 1))]
       (let [;; determine name to display
             name (if-let [name (get-in token [:rule :name ])]
                    name
                    (str "text: " (:text token)))
-            p (learn/route-prob token classifiers)
             ;; prepare children prefix
             last? (= i (count tokens))
             new-prefix (if last? \space \|)
@@ -173,9 +112,8 @@
           (print (format "%s%s-- "
                    prefix
                    (if last? \` \|))))
-        (println (format "%s (%s)" name p))
+        (println name)
         (print-tokens (:route token)
-          classifiers
           (inc depth)
           (if (pos? depth) new-prefix ""))))))
 
@@ -188,24 +126,24 @@
   ([module-id s targets context]
    (let [targets (when targets (map (fn [dim] {:dim dim :label dim}) targets))
          {stash :stash
-          winners :winners} (analyze s context module-id targets nil)]
+          candidates :candidates} (detect* s context module-id targets nil)]
 
      ;; 1. print stash
-     (print-stash stash (get-classifier module-id) winners)
+     (print-stash stash candidates)
 
-     ;; 2. print winners
-     (printf "\n%d winners:\n" (count winners))
-     (doseq [winner winners]
-       (printf "%-25s %s %s\n" (str (name (:dim winner))
-                                     (if (:latent winner) " (latent)" ""))
-                               (engine/export-value winner {:date-fn str})
-                               (dissoc winner :value :route :rule :pos :text :end :index
+     ;; 2. print candidates
+     (printf "\n%d candidates:\n" (count candidates))
+     (doseq [candidate candidates]
+       (printf "%-25s %s %s\n" (str (name (:dim candidate))
+                                     (if (:latent candidate) " (latent)" ""))
+                               (engine/export-value candidate {:date-fn str})
+                               (dissoc candidate :value :route :rule :pos :text :end :index
                                                :dim :start :latent :body :pred :timezone :values)))
 
      ;; 3. ask for details
      (printf "For further info: (details idx) where 1 <= idx <= %d\n" (dec (count stash)))
      (def details (fn [n]
-                    (print-tokens (nth stash n) (get-classifier module-id))))
+                    (print-tokens (nth stash n))))
      (def token (fn [n]
                   (nth stash n))))))
 
@@ -264,7 +202,7 @@
   [context module {:keys [text]}]
   (mapcat (fn [text]
             (try
-              (->> (analyze text context module nil nil)
+              (->> (detect* text context module nil nil)
                    :stash
                    (keep :dim))
               (catch Exception e
@@ -282,30 +220,28 @@
        distinct))
 
 (defn load!
-  "(Re)loads rules and classifiers for languages or/and config.
-   If no language list nor config provided, loads all languages.
+  "(Re)loads rules and corpora for the requested languages.
+   If no language list is provided, loads all languages.
    Returns a map of loaded modules with available dimensions."
   ([] (load! nil))
   ([languages]
-   (let [langs (seq languages)
-         config (when (or langs (empty? nil))
-                       (cond-> (set (res/get-subdirs "languages"))
-                         langs (set/intersection (set langs))
-                         true gen-config-for-langs))]
+   (let [available-langs (set (res/get-subdirs "languages"))
+         langs (if (seq languages)
+                 (set/intersection available-langs (set languages))
+                 available-langs)
+         config (gen-config-for-langs langs)]
      (reset! rules-map {})
      (reset! corpus-map {})
      (let [data (->> config
                      (pmap (fn [[config-key {corpus-files :corpus rules-files :rules}]]
                              (let [lang (-> config-key name (string/split #"\$") first)
                                    corpus (make-corpus lang corpus-files)
-                                   rules (make-rules lang rules-files)
-                                   c (learn/train-classifiers corpus rules learn/extract-route-features)]
-                               [config-key {:corpus corpus :rules rules :classifier c}])))
+                                   rules (make-rules lang rules-files)]
+                               [config-key {:corpus corpus :rules rules}])))
                      (into {}))]
-       (doseq [[config-key {:keys [classifier corpus rules]}] data]
+       (doseq [[config-key {:keys [corpus rules]}] data]
          (swap! corpus-map assoc config-key corpus)
-         (swap! rules-map assoc config-key rules)
-         (swap! classifiers-map assoc config-key classifier)))
+         (swap! rules-map assoc config-key rules)))
      (->> @corpus-map
           (pmap (fn [[module corpus]]
                   [module (get-dims module corpus)]))
@@ -323,10 +259,9 @@
   (for [test tests
         text (:text test)]
     (try
-      (let [{:keys [stash winners]} (analyze text context module nil nil)
-            winner-count (count winners)
+      (let [{:keys [candidates]} (detect* text context module nil nil)
             check (first (:checks test)) ; only one test is supported now
-            check-results (map (partial check context) winners)] ; return nil if OK, [expected actual] if not OK
+            check-results (map (partial check context) candidates)] ; return nil if OK, [expected actual] if not OK
         (if (some #(or (nil? %) (false? %)) check-results)
           [0 text nil]
           [1 text [(ffirst check-results) (map second check-results)]]))
@@ -359,64 +294,17 @@
 ;--------------------------------------------------------------------------
 ; Public API
 ;--------------------------------------------------------------------------
-(defn- not-select-winners
-  "Winner= token that is not 'smaller' (in the sense of the provided partial
-  order) than another winner, and that resolves to a value"
-  [resolve-fn candidates]
-  (->> candidates
-       (mapcat resolve-fn)
-       (filter :value)))
-
-
-(defn- detect*
-  "Parse a sentence, returns the stash and a curated list of winners.
-   Targets is a coll of {:dim dim :label label} : only winners of these dims are
-   kept, and they receive a :label key = the label provided.
-   If no targets specified, all winners are returned."
-  [s context module targets base-stash]
-  {:pre [s context module]}
-  (let [rules (get-rules module)
-        stash (engine/pass-all s rules base-stash)
-        ; add an index to tokens in the stash
-        stash (map #(if (map? %1) (assoc %1 :index %2) %1)
-                   stash
-                   (iterate inc 0))
-        dim-label (when (seq targets) (into {} (for [{:keys [dim label]} targets]
-                                           [(keyword dim) label])))
-        winners (->> stash
-                     (filter :pos)
-                     ; just keep the dims we want, and add the label key
-                     (?>> dim-label (keep #(when-let [label (get dim-label (:dim %))]
-                                             (assoc % :label label))))
-                     ; normalize the time.
-                     (not-select-winners
-                       #(engine/resolve-token % context module))
-
-                     ; add a confidence key
-                     ; low confidence for numbers covered by datetime
-                     (engine/estimate-confidence context module)
-                     ; adapt the keys for the outside world
-                     (map (fn [{:keys [pos end text] :as token}]
-                            (merge token {:start pos
-                                          :end end
-                                          :body text}))))]
-    {:stash stash :winners winners}))
-
-
 (defn detect
-  "Public API. Parses text using given module. If dims are provided as a list of
-  keywords referencing token dimensions, only these dimensions are extracted.
-  Context is a map with a :reference-time key. If not provided, the system
-  current date and time is used."
+  "Returns every normalized rule match for text in the given module.
+   If dims are provided as a list of token-dimension keywords, only those
+   dimensions are returned. Context is a map with a :reference-time key. If it
+   is not provided, the current system date and time is used."
   ([module text]
    (detect module text []))
   ([module text dims]
    (detect module text dims (default-context :now)))
   ([module text dims context]
    (->> (detect* text context module (map (fn [dim] {:dim dim :label dim}) dims) nil)
-        :winners
+        :candidates
         (map #(assoc % :value (engine/export-value % {})))
         (map #(select-keys % [:dim :body :value :start :end :latent])))))
-
-
-

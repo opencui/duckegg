@@ -11,8 +11,8 @@
         ;en (take 100 en)
         results (for [[phrase start' end'] en :when (<= end' (count phrase))]
                   (let [s (strings/trim (subs phrase start' end')) ;remove whitespaces
-                        {:keys [winners] :as res} (p/parse s (p/default-context :now) module-id [{:dim :time :label "T"}])
-                        {:keys [start end value] :as first-winner} (first winners)
+                        candidates (p/detect module-id s [:time] (p/default-context :now))
+                        {:keys [start end value]} (first candidates)
                         covers? (and start
                                      (= 0 start)
                                      (= (count s) end))]

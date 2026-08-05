@@ -1,0 +1,299 @@
+# Duckling Clojure Extension: Fuzzy Temporal Expressions
+
+## Status
+
+Proposed specification. The Kotlin interpreter described here is out of scope.
+
+## Goal
+
+Extend the archived Clojure Duckling implementation with fuzzy temporal
+constraints without changing the semantics of the existing `:time` dimension.
+
+Existing expressions such as the following must continue to produce the same
+`:time` tokens they produce today:
+
+- `next month`
+- `this week`
+- `tomorrow`
+- `next Tuesday`
+- `August 16`
+- `morning`
+- `tomorrow afternoon`
+
+The parser will additionally emit semantic constraint tokens for expressions
+that describe qualitative temporal ranges. These tokens preserve ambiguity and
+composition for a downstream interpreter.
+
+## Architecture
+
+```text
+Natural Language
+        |
+        v
+Duckling Parser
+        |
+        v
+Temporal Constraint AST
+        |
+        v
+Application Interpreter (Kotlin)
+        |
+        v
+Reservation Filter / Ranking
+```
+
+Duckling acts as a semantic compiler. It recognizes syntax and constructs a
+temporal constraint AST. It does not interpret that AST for a particular
+application domain.
+
+## Design Principles
+
+### Preserve existing time behavior
+
+New rules must not change the production, resolution, or exported values of
+existing `:time` tokens.
+
+When an expression already has a `:time` interpretation, both results should be
+available:
+
+1. The unchanged `:time` token.
+2. The additional fuzzy temporal constraint token.
+
+For example, `tomorrow afternoon` should retain its existing `:time` interval
+and also produce a day-part constraint based on the `tomorrow` token.
+
+### Preserve ambiguity
+
+Duckling must return every normalizable matching constraint. It must not select,
+rank, or score competing temporal interpretations.
+
+### Preserve qualitative meaning
+
+The parser must not translate terms such as `early`, `middle`, or `late` into
+numeric boundaries. It must likewise avoid defining application-specific
+reservation hours for `morning`, `afternoon`, or `evening` in the new AST.
+
+### Produce serializable output
+
+Exported constraints must not contain rule routes, predicate functions, or Joda
+objects. A nested `:time` base must be resolved and exported through the existing
+time API before it is included in a constraint value.
+
+## Semantic Dimensions
+
+### Calendar segment
+
+Represents a qualitative segment of a calendar period.
+
+Examples:
+
+- `early next month`
+- `mid next month`
+- `late next month`
+- `early this year`
+- `late this year`
+- `early this week`
+- `mid week`
+- `late next week`
+
+```clojure
+{:dim :calendar-segment
+ :value {:scope :month
+         :segment :middle
+         :base <exported-time-value>}}
+```
+
+Valid initial scopes are `:month`, `:year`, and `:week`. Valid initial segments
+are `:early`, `:middle`, and `:late`.
+
+### Week part
+
+Represents a named subset of a week rather than a continuous qualitative
+segment.
+
+Examples:
+
+- `weekend`
+- `weekday`
+- `next weekend`
+- `weekdays next week`
+
+```clojure
+{:dim :week-part
+ :value {:part :weekend
+         :base <optional-exported-time-value>}}
+```
+
+Valid initial parts are `:weekday` and `:weekend`.
+
+### Day part
+
+Represents a qualitative part of a day.
+
+Examples:
+
+- `morning`
+- `early morning`
+- `afternoon`
+- `late afternoon`
+- `evening`
+- `tonight`
+- `tomorrow afternoon`
+
+```clojure
+{:dim :day-part
+ :value {:part :afternoon
+         :qualifier nil
+         :base <optional-exported-time-value>}}
+```
+
+```clojure
+{:dim :day-part
+ :value {:part :morning
+         :qualifier :early
+         :base <optional-exported-time-value>}}
+```
+
+Valid initial parts are `:morning`, `:afternoon`, `:evening`, and `:night`.
+Valid initial qualifiers are `nil`, `:early`, and `:late`.
+
+`tonight` may carry deictic metadata if needed to distinguish it from an
+unanchored `evening` or `night` constraint.
+
+### Temporal negation
+
+Negation is an orthogonal AST wrapper and must not be represented as an
+`:exclude` range modifier. This allows negation to compose with exact times and
+all fuzzy constraints.
+
+Examples:
+
+- `not this month`
+- `not tomorrow`
+- `not early next month`
+- `not on weekends`
+
+```clojure
+{:dim :temporal-negation
+ :value {:operand {:dim :time
+                   :value <exported-time-value>}}}
+```
+
+The operand may be either an existing `:time` value or another temporal
+constraint AST node.
+
+## Composition
+
+### Calendar segment over time
+
+```text
+mid next month
+    |     |
+    |     +-- existing :time token for next month
+    +-------- calendar segment modifier
+          |
+          v
+CalendarSegment(scope=month, segment=middle, base=next-month)
+```
+
+### Day part over time
+
+```text
+tomorrow afternoon
+    |         |
+    |         +-- day-part modifier
+    +------------ existing :time token for tomorrow
+          |
+          v
+DayPart(part=afternoon, base=tomorrow)
+```
+
+The fuzzy base is the `tomorrow` token, not Duckling's existing resolved
+`tomorrow afternoon` interval. This prevents existing hard-coded part-of-day
+boundaries from becoming the meaning of the qualitative AST.
+
+### Negation over time or constraints
+
+```text
+not this month
+ |      |
+ |      +-- existing :time token for this month
+ +--------- negation operator
+       |
+       v
+Not(base=this-month)
+```
+
+## Parser Responsibilities
+
+Duckling is responsible for:
+
+- recognizing fuzzy temporal expressions;
+- composing modifiers with existing time tokens;
+- preserving the original modifier and scope;
+- resolving and exporting nested time bases safely;
+- preserving all normalizable interpretations;
+- returning a structured temporal constraint AST.
+
+Duckling is not responsible for:
+
+- selecting reservation slots;
+- converting qualitative segments into numeric boundaries;
+- evaluating availability;
+- scoring candidate dates;
+- ranking results;
+- choosing a final date.
+
+Those operations belong to the future application interpreter.
+
+## Implementation Shape
+
+English rules and corpora should be added separately from the existing time
+rules, for example:
+
+```text
+resources/languages/en/rules/fuzzy_time.clj
+resources/languages/en/corpus/fuzzy_time.clj
+```
+
+Keeping fuzzy rules separate makes the boundary around the existing `:time`
+dimension explicit. The normal language configuration loader should discover
+these files automatically.
+
+Intermediate modifier tokens may omit `:value` so they participate in rule
+composition without appearing in public detection results.
+
+The engine needs dimension-aware resolution and export dispatch:
+
+- `:time` continues through the existing time resolver and exporter unchanged.
+- Fuzzy dimensions resolve nested `:base` time tokens.
+- Fuzzy dimensions export their structured values directly.
+- Temporal negation recursively resolves and exports its operand.
+
+## Open Semantic Decisions
+
+The implementation must make these policies explicit:
+
+- Whether standalone `morning` has no base or an implicit current-day base.
+- Whether `mid week` has no base or implicitly means the current week.
+- Whether `tonight` is represented with a `:today` deictic qualifier.
+- Whether `weekday` means a recurring calendar subset or requires a week base.
+
+Until decided, rules should prefer preserving the lexical constraint over
+silently selecting a date.
+
+## Tests and Acceptance Criteria
+
+The test suite must cover:
+
+- unchanged existing `:time` results for representative legacy expressions;
+- fuzzy tokens emitted alongside existing `:time` tokens;
+- `early`, `middle`, and `late` over month, year, and week bases;
+- `tomorrow afternoon` and equivalent day-plus-day-part composition;
+- standalone day parts and week parts;
+- negation over exact time and fuzzy constraint operands;
+- multiple ambiguous candidates being preserved;
+- serialization without predicates, functions, routes, or Joda objects;
+- absence of reservation selection, scoring, and numeric fuzzy-range logic.
+
+Completion requires all existing tests and the new fuzzy temporal tests to pass.

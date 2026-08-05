@@ -652,7 +652,7 @@
   "15 sati sutra"
   (datetime 2013 2 13 15)
 
-  ; winner is picked but has a different hash, strange
+  ; the candidate has the expected value but a different hash, strange
   ;  Expected {:start #object[org.joda.time.DateTime 0x701d4ca1 "2013-02-12T14:00:00.000-02:00"], :grain :hour}
   ;  Got      {:start #object[org.joda.time.DateTime 0x78ce5efb "2013-02-12T14:00:00.000-02:00"], :grain :hour}
   ;  "nakon 14 sati"
